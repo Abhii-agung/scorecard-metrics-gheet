@@ -130,8 +130,91 @@ WITH date_range AS (
     AND NOT (`sgl_publicpublic.channels`.id = 1 AND `sgl_publicpublic.orders`.cancel_proposer = 'buyer' AND `sgl_publicpublic.orders`.cancel_reason = 'customer_wants_to_cancel_order')
     AND NOT (`sgl_publicpublic.channels`.id = 1 AND `sgl_publicpublic.orders`.cancel_proposer = 'system' AND `sgl_publicpublic.orders`.cancel_reason IN ('payment_failed', 'customer_wants_to_cancel_order'))
   GROUP BY store_name, current_revenue.trx_count, date_range.week_year
-)
+),
 
+raw_data_servingtime AS (
+  SELECT 
+    dt.week_year,
+    DATE(`sgl_publicpublic.salesorders`.ordered_at, 'Asia/Jakarta') AS date,
+    COALESCE(st.alternative_name, st.name) AS store,
+    sb.reference_external_id AS external_id,
+    ch.name AS channels,
+    br.name AS brands,
+    EXTRACT(HOUR FROM DATETIME(`sgl_publicpublic.salesorders`.ordered_at, 'Asia/Jakarta')) AS group_hours,
+    EXTRACT(TIME FROM DATETIME(`sgl_publicpublic.salesorders`.ordered_at, 'Asia/Jakarta')) AS jam_order,
+    COALESCE(
+      DATETIME_DIFF(
+        DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.ready_at), 'Asia/Jakarta'),
+        DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.accepted_at), 'Asia/Jakarta'),
+        SECOND
+      ),
+      o.kitchen_preparation_duration
+    ) AS serving_time,
+
+    -- sebaran servingtime
+    CASE 
+      WHEN COALESCE(
+        DATETIME_DIFF(
+          DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.ready_at), 'Asia/Jakarta'),
+          DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.accepted_at), 'Asia/Jakarta'),
+          SECOND
+        ),
+        o.kitchen_preparation_duration
+      ) < 420 THEN '< 7 menit'
+      WHEN COALESCE(
+        DATETIME_DIFF(
+          DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.ready_at), 'Asia/Jakarta'),
+          DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.accepted_at), 'Asia/Jakarta'),
+          SECOND
+        ),
+        o.kitchen_preparation_duration
+      ) BETWEEN 420 AND 840 THEN '7-14 menit'
+      WHEN COALESCE(
+        DATETIME_DIFF(
+          DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.ready_at), 'Asia/Jakarta'),
+          DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.accepted_at), 'Asia/Jakarta'),
+          SECOND
+        ),
+        o.kitchen_preparation_duration
+      ) > 840 THEN '> 14 menit'
+      ELSE 'unknown'
+    END AS serving_time_range
+
+  FROM `sgl_publicpublic.salesorders`
+  JOIN `sgl_publicpublic.salesorder_brands` sb 
+    ON sb.reference_external_id = `sgl_publicpublic.salesorders`.reference_external_id
+  LEFT JOIN `sgl_publicpublic.channels` ch 
+    ON ch.id = `sgl_publicpublic.salesorders`.channel_id
+  LEFT JOIN `sgl_publicpublic.brands` br 
+    ON br.id = sb.brand_id 
+  LEFT JOIN `sgl_publicpublic.stores` st 
+    ON st.id = `sgl_publicpublic.salesorders`.store_id
+  JOIN `sgl_publicpublic.orders` o 
+    ON o.external_id = `sgl_publicpublic.salesorders`.reference_external_id
+  CROSS JOIN date_range dt 
+
+  WHERE 1=1
+    AND `sgl_publicpublic.salesorders`.status = 'completed'
+    AND `sgl_publicpublic.salesorders`.deleted_at IS NULL
+    AND ch.id IN (1,2,3)
+    AND COALESCE(
+          DATETIME_DIFF(
+            DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.ready_at), 'Asia/Jakarta'),
+            DATETIME(TIMESTAMP(`sgl_publicpublic.salesorders`.accepted_at), 'Asia/Jakarta'),
+            SECOND
+          ),
+          o.kitchen_preparation_duration
+        ) > 20 -- buang data absurd <20 detik
+),
+servingtime_v2 AS(
+SELECT 
+  week_year,
+  store,
+  COUNTIF(serving_time_range = '> 14 menit') * 1.0 / COUNT(*) AS pct
+FROM raw_data_servingtime
+GROUP BY store, week_year
+ORDER BY store, week_year
+)
 SELECT
   date_range.week_year AS week_year,
   COALESCE(s.alternative_name, s.name) AS store,
@@ -139,6 +222,7 @@ SELECT
   COALESCE(serving_time.kitchen_preparation_duration, 0) AS avg_serving_time,
   COALESCE(complain_data.complain_rate, 0) AS complain_rate,
   COALESCE(cancellation.cancel_rate, 0) AS cancel_rate,
+  COALESCE(servingtime_v2.pct, 0) AS servingtime_v2,
   date_range.from_date AS from_date,
   date_range.until_date AS until_date
 FROM `sgl_publicpublic.stores` s
@@ -147,5 +231,6 @@ LEFT JOIN cmr ON cmr.store_name = s.alternative_name AND cmr.week_year = date_ra
 LEFT JOIN serving_time ON serving_time.store_name = s.alternative_name AND serving_time.week_year = date_range.week_year
 LEFT JOIN complain_data ON complain_data.store_name = s.alternative_name AND complain_data.week_year = date_range.week_year
 LEFT JOIN cancellation ON cancellation.store_name = s.alternative_name AND cancellation.week_year = date_range.week_year
+LEFT JOIN servingtime_v2 ON servingtime_v2.store = s.alternative_name AND servingtime_v2.week_year = date_range.week_year
 WHERE s.is_online_sales IS TRUE
 ORDER BY store, until_date;
