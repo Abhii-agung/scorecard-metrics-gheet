@@ -13,11 +13,26 @@ WITH date_range AS (
   SELECT
     date_range.month_year AS month_year,
     `sgl_publicpublic.stores`.alternative_name AS store_name,
-    ROUND((100 - COALESCE(AVG(`sgl_publicpublic.mar_items`.availability_percentage),0))/100,5) AS cmr_percentage
+     ROUND((100 - COALESCE(AVG(CASE WHEN `sgl_publicpublic.mar_items`.item_name IN ('Paket Mie Goreng Hot Spicy Scramble Egg + Ayam Geprek',
+        'Paket Mie Goreng Hot Spicy Scramble Egg + Ayam Katsu',
+        'Paket Mie Goreng Hot Spicy Scramble Egg + Ayam Spicy',
+        'Paket Mie Goreng Hot Spicy Scramble Egg + Set Wings',
+        'Paket Mie Goreng Hot Spicy Scramble Egg + Beef',
+        'Paket Mie Goreng Scramble Egg + Beef',
+        'Paket Mie Goreng Double + Scramble Egg + Ayam Geprek',
+        'Paket Mie Goreng Scramble Egg + 2 Ayam Geprek',
+        'Paket Mie Goreng Scramble Egg + Ayam Geprek',
+        'Paket Mie Goreng Scramble Egg + Set Wings',
+        'Paket Mie Goreng Hot Spicy Scramble Egg + Ayam Geprek',
+        'Paket Mie Goreng Hot Spicy Scramble Egg + Set Wings',
+        'Paket Mie Goreng Hot Spicy Scramble Egg + Ayam Katsu',
+        'Paket Mie Goreng Hot Spicy Scramble Egg + Ayam Spicy' ) AND `sgl_publicpublic.mar_items`.availability_percentage > 0 THEN 100 
+  ELSE `sgl_publicpublic.mar_items`.availability_percentage END),0))/100,5) AS cmr_percentage
   FROM `sgl_publicpublic.mar_items`
   LEFT JOIN `sgl_publicpublic.mar_reasons` ON `sgl_publicpublic.mar_reasons`.id = `sgl_publicpublic.mar_items`.mar_reason_id
   JOIN `sgl_publicpublic.merchants` ON `sgl_publicpublic.merchants`.id = `sgl_publicpublic.mar_items`.merchant_id
   JOIN `sgl_publicpublic.stores` ON `sgl_publicpublic.stores`.id = `sgl_publicpublic.merchants`.store_id
+  JOIN `sgl_publicpublic.brands` b ON b.id = `sgl_publicpublic.merchants`.brand_id
   CROSS JOIN date_range
   WHERE 1=1
     AND DATE(`sgl_publicpublic.mar_items`.date) BETWEEN date_range.from_date AND date_range.until_date
@@ -33,6 +48,7 @@ WITH date_range AS (
       )) 
       OR `sgl_publicpublic.mar_items`.mar_reason_id IS NULL
     )
+    AND b.id NOT IN (26, 27, 30)
   GROUP BY store_name, date_range.month_year
 )
 , serving_time AS (
